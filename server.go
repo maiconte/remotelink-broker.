@@ -4,79 +4,61 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
-	"time"
 	"strings"
 	"github.com/gorilla/websocket"
 )
 
 var (
-	clients = make(map[string]*websocket.Conn)
-	mu      sync.Mutex
-	upgrader = websocket.Upgrader{
+	// Mapear conexões por ID
+	pcClients     = make(map[string]*websocket.Conn)
+	mobileClients = make(map[string]*websocket.Conn)
+	mu            sync.Mutex
+	upgrader      = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 )
 
-func enableCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == "OPTIONS" { return }
-		next.ServeHTTP(w, r)
-	})
-}
-
 func main() {
-	mux := http.NewServeMux()
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "Standalone Broker Online") })
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "RemoteLink Broker is Online 🚀")
+	// Rota para o PC (Envia Tela, Recebe Mouse)
+	http.HandleFunc("/ws/pc", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.ToLower(r.URL.Query().Get("id"))
+		conn, _ := upgrader.Upgrade(w, r, nil)
+		mu.Lock(); pcClients[id] = conn; mu.Unlock()
+		fmt.Printf("💻 PC [%s] Conectado\n", id)
+		
+		for {
+			mt, message, err := conn.ReadMessage()
+			if err != nil { break }
+			// Se receber tela do PC, manda para o Celular correspondente
+			mu.Lock()
+			if mob, ok := mobileClients[id]; ok {
+				mob.WriteMessage(mt, message)
+			}
+			mu.Unlock()
+		}
 	})
 
-	mux.HandleFunc("/ws/pc", func(w http.ResponseWriter, r *http.Request) {
-		// Forçar ID para minúsculo
+	// Rota para o Mobile (Recebe Tela, Envia Mouse)
+	http.HandleFunc("/ws/mobile", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.ToLower(r.URL.Query().Get("id"))
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil { return }
-		
-		mu.Lock()
-		clients[id] = conn
-		mu.Unlock()
-		
-		fmt.Printf("✅ PC [%s] conectado.\n", id)
-		
-		conn.SetPongHandler(func(string) error { 
-			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-			return nil 
-		})
+		conn, _ := upgrader.Upgrade(w, r, nil)
+		mu.Lock(); mobileClients[id] = conn; mu.Unlock()
+		fmt.Printf("📱 Mobile [%s] Conectado\n", id)
 
 		for {
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				mu.Lock()
-				delete(clients, id)
-				mu.Unlock()
-				fmt.Printf("❌ PC [%s] desconectado.\n", id)
-				break
+			mt, message, err := conn.ReadMessage()
+			if err != nil { break }
+			// Se receber comando do Celular, manda para o PC
+			mu.Lock()
+			if pc, ok := pcClients[id]; ok {
+				pc.WriteMessage(mt, message)
 			}
+			mu.Unlock()
 		}
 	})
 
-	mux.HandleFunc("/api/signal", func(w http.ResponseWriter, r *http.Request) {
-		// Forçar ID alvo para minúsculo
-		targetID := strings.ToLower(r.URL.Query().Get("id"))
-		mu.Lock()
-		conn, exists := clients[targetID]
-		mu.Unlock()
-		if exists {
-			conn.WriteMessage(websocket.TextMessage, []byte("LAUNCH_ENGINE"))
-			fmt.Fprint(w, "{\"status\":\"success\"}")
-		} else {
-			fmt.Fprint(w, "{\"status\":\"offline\"}")
-		}
-	})
-
-	fmt.Println("🚀 Broker Global RemoteLink Pro rodando...")
-	http.ListenAndServe(":8080", enableCORS(mux))
+	fmt.Println("🚀 Standalone Broker rodando na porta 8080...")
+	http.ListenAndServe(":8080", nil)
 }
