@@ -18,43 +18,49 @@ var (
 )
 
 func main() {
-	// Pega a porta do Render ou usa 8080 como reserva
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		id := strings.ToLower(r.URL.Query().Get("id"))
-		role := r.URL.Query().Get("role")
-
-		if id == "" {
-			fmt.Fprint(w, "RemoteLink V3.3 Active")
-			return
-		}
-
+	// Rota para o PC
+	http.HandleFunc("/pc/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.ToLower(strings.TrimPrefix(r.URL.Path, "/pc/"))
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil { return }
 		
-		fullID := id + "_" + role
-		mu.Lock()
-		clients[fullID] = conn
-		mu.Unlock()
-		
+		mu.Lock(); clients[id+"_pc"] = conn; mu.Unlock()
+		fmt.Printf("💻 PC [%s] Conectado\n", id)
+
 		for {
 			mt, message, err := conn.ReadMessage()
 			if err != nil { break }
-			
-			targetRole := "mobile"
-			if role == "mobile" { targetRole = "pc" }
-			
 			mu.Lock()
-			if target, ok := clients[id+"_"+targetRole]; ok {
-				target.WriteMessage(mt, message)
-			}
+			if mob, ok := clients[id+"_mobile"]; ok { mob.WriteMessage(mt, message) }
 			mu.Unlock()
 		}
-		mu.Lock(); delete(clients, fullID); mu.Unlock()
+		mu.Lock(); delete(clients, id+"_pc"); mu.Unlock()
 	})
 
-	fmt.Println("🚀 Servidor V3.3 rodando na porta " + port)
+	// Rota para o Mobile
+	http.HandleFunc("/mobile/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.ToLower(strings.TrimPrefix(r.URL.Path, "/mobile/"))
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil { return }
+		
+		mu.Lock(); clients[id+"_mobile"] = conn; mu.Unlock()
+		fmt.Printf("📱 Mobile [%s] Conectado\n", id)
+
+		for {
+			mt, message, err := conn.ReadMessage()
+			if err != nil { break }
+			mu.Lock()
+			if pc, ok := clients[id+"_pc"]; ok { pc.WriteMessage(mt, message) }
+			mu.Unlock()
+		}
+		mu.Lock(); delete(clients, id+"_mobile"); mu.Unlock()
+	})
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "V3.4 Active") })
+
+	fmt.Println("🚀 Servidor V3.4 na porta " + port)
 	http.ListenAndServe(":"+port, nil)
 }
