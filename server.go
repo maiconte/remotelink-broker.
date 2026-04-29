@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 	"github.com/gorilla/websocket"
 )
 
@@ -15,15 +16,12 @@ var (
 	}
 )
 
-// Middleware para habilitar CORS em todas as rotas
 func enableCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == "OPTIONS" {
-			return
-		}
+		if r.Method == "OPTIONS" { return }
 		next.ServeHTTP(w, r)
 	})
 }
@@ -31,44 +29,56 @@ func enableCORS(next http.Handler) http.Handler {
 func main() {
 	mux := http.NewServeMux()
 
-	// Rota Raiz para a bolinha do App ficar Verde
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "RemoteLink Broker is Online 🚀")
 	})
 
-	// Rota WebSocket
 	mux.HandleFunc("/ws/pc", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil { return }
+		
 		mu.Lock()
 		clients[id] = conn
 		mu.Unlock()
+		
 		fmt.Printf("✅ PC [%s] conectado.\n", id)
+		
+		// Sistema de Keep-Alive para evitar que o Render derrube a conexão
+		conn.SetPongHandler(func(string) error { 
+			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			return nil 
+		})
+
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			_, _, err := conn.ReadMessage()
+			if err != nil {
 				mu.Lock()
 				delete(clients, id)
 				mu.Unlock()
+				fmt.Printf("❌ PC [%s] desconectado.\n", id)
 				break
 			}
 		}
 	})
 
-	// Rota de Sinal
 	mux.HandleFunc("/api/signal", func(w http.ResponseWriter, r *http.Request) {
 		targetID := r.URL.Query().Get("id")
 		mu.Lock()
 		conn, exists := clients[targetID]
 		mu.Unlock()
 		if exists {
-			conn.WriteMessage(websocket.TextMessage, []byte("LAUNCH_ENGINE"))
-			fmt.Fprint(w, "{\"status\":\"success\"}")
+			err := conn.WriteMessage(websocket.TextMessage, []byte("LAUNCH_ENGINE"))
+			if err != nil {
+				fmt.Fprint(w, "{\"status\":\"offline\"}")
+			} else {
+				fmt.Fprint(w, "{\"status\":\"success\"}")
+			}
 		} else {
 			fmt.Fprint(w, "{\"status\":\"offline\"}")
 		}
 	})
 
-	fmt.Println("🚀 Broker Global RemoteLink Pro rodando na porta 8080...")
+	fmt.Println("🚀 Broker Global RemoteLink Pro rodando...")
 	http.ListenAndServe(":8080", enableCORS(mux))
 }
