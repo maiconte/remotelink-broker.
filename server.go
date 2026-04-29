@@ -12,19 +12,23 @@ var (
 	clients = make(map[string]*websocket.Conn)
 	mu      sync.Mutex
 	upgrader = websocket.Upgrader{
-		ReadBufferSize:  1024 * 1024,
-		WriteBufferSize: 1024 * 1024,
-		CheckOrigin:     func(r *http.Request) bool { return true },
+		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 )
 
 func main() {
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "RemoteLink Engine V3 Online") })
-
-	http.HandleFunc("/ws/stream", func(w http.ResponseWriter, r *http.Request) {
+	// Rota Única para TUDO (PC e Mobile)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.ToLower(r.URL.Query().Get("id"))
-		role := r.URL.Query().Get("role") // "pc" ou "mobile"
-		
+		role := r.URL.Query().Get("role")
+
+		// Se não tiver ID, mostra status
+		if id == "" {
+			fmt.Fprint(w, "RemoteLink Broker is Online 🚀")
+			return
+		}
+
+		// Se tiver ID, tenta virar WebSocket
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil { return }
 		
@@ -33,13 +37,12 @@ func main() {
 		clients[fullID] = conn
 		mu.Unlock()
 		
-		fmt.Printf("Connected: %s as %s\n", id, role)
+		fmt.Printf("Conectado: %s\n", fullID)
 
 		for {
 			mt, message, err := conn.ReadMessage()
 			if err != nil { break }
 			
-			// Roteamento Direto
 			targetRole := "mobile"
 			if role == "mobile" { targetRole = "pc" }
 			
@@ -49,10 +52,9 @@ func main() {
 			}
 			mu.Unlock()
 		}
-		
 		mu.Lock(); delete(clients, fullID); mu.Unlock()
 	})
 
-	fmt.Println("🚀 Servidor V3 Ativo na porta 8080")
+	fmt.Println("🚀 Servidor Universal rodando...")
 	http.ListenAndServe(":8080", nil)
 }
