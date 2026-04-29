@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sync"
 	"time"
+	"strings"
 	"github.com/gorilla/websocket"
 )
 
@@ -34,7 +35,8 @@ func main() {
 	})
 
 	mux.HandleFunc("/ws/pc", func(w http.ResponseWriter, r *http.Request) {
-		id := r.URL.Query().Get("id")
+		// Forçar ID para minúsculo
+		id := strings.ToLower(r.URL.Query().Get("id"))
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil { return }
 		
@@ -44,7 +46,6 @@ func main() {
 		
 		fmt.Printf("✅ PC [%s] conectado.\n", id)
 		
-		// Sistema de Keep-Alive para evitar que o Render derrube a conexão
 		conn.SetPongHandler(func(string) error { 
 			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 			return nil 
@@ -63,17 +64,14 @@ func main() {
 	})
 
 	mux.HandleFunc("/api/signal", func(w http.ResponseWriter, r *http.Request) {
-		targetID := r.URL.Query().Get("id")
+		// Forçar ID alvo para minúsculo
+		targetID := strings.ToLower(r.URL.Query().Get("id"))
 		mu.Lock()
 		conn, exists := clients[targetID]
 		mu.Unlock()
 		if exists {
-			err := conn.WriteMessage(websocket.TextMessage, []byte("LAUNCH_ENGINE"))
-			if err != nil {
-				fmt.Fprint(w, "{\"status\":\"offline\"}")
-			} else {
-				fmt.Fprint(w, "{\"status\":\"success\"}")
-			}
+			conn.WriteMessage(websocket.TextMessage, []byte("LAUNCH_ENGINE"))
+			fmt.Fprint(w, "{\"status\":\"success\"}")
 		} else {
 			fmt.Fprint(w, "{\"status\":\"offline\"}")
 		}
