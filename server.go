@@ -2,65 +2,53 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net/http"
-	"sync"
-	"strings"
 	"os"
-	"github.com/gorilla/websocket"
+	"sync"
 )
 
 var (
-	clients = make(map[string]*websocket.Conn)
-	mu      sync.Mutex
-	upgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
+	frames = make(map[string][]byte)
+	mu     sync.Mutex
 )
 
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
 
-	// Rota para o PC
-	http.HandleFunc("/pc/", func(w http.ResponseWriter, r *http.Request) {
-		id := strings.ToLower(strings.TrimPrefix(r.URL.Path, "/pc/"))
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil { return }
-		
-		mu.Lock(); clients[id+"_pc"] = conn; mu.Unlock()
-		fmt.Printf("💻 PC [%s] Conectado\n", id)
-
-		for {
-			mt, message, err := conn.ReadMessage()
-			if err != nil { break }
+	// PC envia imagem aqui
+	http.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		body, _ := ioutil.ReadAll(r.Body)
+		if len(body) > 0 {
 			mu.Lock()
-			if mob, ok := clients[id+"_mobile"]; ok { mob.WriteMessage(mt, message) }
+			frames[id] = body
 			mu.Unlock()
 		}
-		mu.Lock(); delete(clients, id+"_pc"); mu.Unlock()
+		w.WriteHeader(http.StatusOK)
 	})
 
-	// Rota para o Mobile
-	http.HandleFunc("/mobile/", func(w http.ResponseWriter, r *http.Request) {
-		id := strings.ToLower(strings.TrimPrefix(r.URL.Path, "/mobile/"))
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil { return }
-		
-		mu.Lock(); clients[id+"_mobile"] = conn; mu.Unlock()
-		fmt.Printf("📱 Mobile [%s] Conectado\n", id)
+	// Mobile baixa imagem daqui
+	http.HandleFunc("/view", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		mu.Lock()
+		img, ok := frames[id]
+		mu.Unlock()
 
-		for {
-			mt, message, err := conn.ReadMessage()
-			if err != nil { break }
-			mu.Lock()
-			if pc, ok := clients[id+"_pc"]; ok { pc.WriteMessage(mt, message) }
-			mu.Unlock()
+		if ok {
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Write(img)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
 		}
-		mu.Lock(); delete(clients, id+"_mobile"); mu.Unlock()
 	})
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "V3.4 Active") })
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "RemoteLink HTTP Engine ONLINE")
+	})
 
-	fmt.Println("🚀 Servidor V3.4 na porta " + port)
+	fmt.Println("🚀 Motor HTTP rodando na porta " + port)
 	http.ListenAndServe(":"+port, nil)
 }
