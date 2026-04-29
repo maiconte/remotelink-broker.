@@ -9,56 +9,50 @@ import (
 )
 
 var (
-	// Mapear conexões por ID
-	pcClients     = make(map[string]*websocket.Conn)
-	mobileClients = make(map[string]*websocket.Conn)
-	mu            sync.Mutex
-	upgrader      = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
+	clients = make(map[string]*websocket.Conn)
+	mu      sync.Mutex
+	upgrader = websocket.Upgrader{
+		ReadBufferSize:  1024 * 1024,
+		WriteBufferSize: 1024 * 1024,
+		CheckOrigin:     func(r *http.Request) bool { return true },
 	}
 )
 
 func main() {
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "Standalone Broker Online") })
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "RemoteLink Engine V3 Online") })
 
-	// Rota para o PC (Envia Tela, Recebe Mouse)
-	http.HandleFunc("/ws/pc", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/ws/stream", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.ToLower(r.URL.Query().Get("id"))
-		conn, _ := upgrader.Upgrade(w, r, nil)
-		mu.Lock(); pcClients[id] = conn; mu.Unlock()
-		fmt.Printf("💻 PC [%s] Conectado\n", id)
+		role := r.URL.Query().Get("role") // "pc" ou "mobile"
 		
-		for {
-			mt, message, err := conn.ReadMessage()
-			if err != nil { break }
-			// Se receber tela do PC, manda para o Celular correspondente
-			mu.Lock()
-			if mob, ok := mobileClients[id]; ok {
-				mob.WriteMessage(mt, message)
-			}
-			mu.Unlock()
-		}
-	})
-
-	// Rota para o Mobile (Recebe Tela, Envia Mouse)
-	http.HandleFunc("/ws/mobile", func(w http.ResponseWriter, r *http.Request) {
-		id := strings.ToLower(r.URL.Query().Get("id"))
-		conn, _ := upgrader.Upgrade(w, r, nil)
-		mu.Lock(); mobileClients[id] = conn; mu.Unlock()
-		fmt.Printf("📱 Mobile [%s] Conectado\n", id)
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil { return }
+		
+		fullID := id + "_" + role
+		mu.Lock()
+		clients[fullID] = conn
+		mu.Unlock()
+		
+		fmt.Printf("Connected: %s as %s\n", id, role)
 
 		for {
 			mt, message, err := conn.ReadMessage()
 			if err != nil { break }
-			// Se receber comando do Celular, manda para o PC
+			
+			// Roteamento Direto
+			targetRole := "mobile"
+			if role == "mobile" { targetRole = "pc" }
+			
 			mu.Lock()
-			if pc, ok := pcClients[id]; ok {
-				pc.WriteMessage(mt, message)
+			if target, ok := clients[id+"_"+targetRole]; ok {
+				target.WriteMessage(mt, message)
 			}
 			mu.Unlock()
 		}
+		
+		mu.Lock(); delete(clients, fullID); mu.Unlock()
 	})
 
-	fmt.Println("🚀 Standalone Broker rodando na porta 8080...")
+	fmt.Println("🚀 Servidor V3 Ativo na porta 8080")
 	http.ListenAndServe(":8080", nil)
 }
