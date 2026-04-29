@@ -8,7 +8,6 @@ import (
 )
 
 var (
-	// Gerenciador de conexões ativas (ID -> Conexão)
 	clients = make(map[string]*websocket.Conn)
 	mu      sync.Mutex
 	upgrader = websocket.Upgrader{
@@ -16,20 +15,36 @@ var (
 	}
 )
 
+// Middleware para habilitar CORS em todas as rotas
+func enableCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == "OPTIONS" {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
-	// Endpoint WebSocket para os computadores (PCs) ficarem conectados
-	http.HandleFunc("/ws/pc", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+
+	// Rota Raiz para a bolinha do App ficar Verde
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "RemoteLink Broker is Online 🚀")
+	})
+
+	// Rota WebSocket
+	mux.HandleFunc("/ws/pc", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil { return }
-		
 		mu.Lock()
 		clients[id] = conn
 		mu.Unlock()
-		
-		fmt.Printf("✅ PC [%s] conectado via Cloud Link.\n", id)
-		
-		// Manter a conexão viva
+		fmt.Printf("✅ PC [%s] conectado.\n", id)
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				mu.Lock()
@@ -40,19 +55,14 @@ func main() {
 		}
 	})
 
-	// Endpoint para o Celular mandar o comando de conexão
-	http.HandleFunc("/api/signal", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+	// Rota de Sinal
+	mux.HandleFunc("/api/signal", func(w http.ResponseWriter, r *http.Request) {
 		targetID := r.URL.Query().Get("id")
-		
 		mu.Lock()
 		conn, exists := clients[targetID]
 		mu.Unlock()
-		
 		if exists {
-			// Enviar comando para o PC alvo abrir o motor nativo
 			conn.WriteMessage(websocket.TextMessage, []byte("LAUNCH_ENGINE"))
-			fmt.Printf("📡 Comando enviado para o PC [%s]\n", targetID)
 			fmt.Fprint(w, "{\"status\":\"success\"}")
 		} else {
 			fmt.Fprint(w, "{\"status\":\"offline\"}")
@@ -60,5 +70,5 @@ func main() {
 	})
 
 	fmt.Println("🚀 Broker Global RemoteLink Pro rodando na porta 8080...")
-	http.ListenAndServe(":8080", nil)
+	http.ListenAndServe(":8080", enableCORS(mux))
 }
