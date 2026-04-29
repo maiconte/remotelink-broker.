@@ -12,32 +12,37 @@ var (
 	clients = make(map[string]*websocket.Conn)
 	mu      sync.Mutex
 	upgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
+		ReadBufferSize:  65536,
+		WriteBufferSize: 65536,
+		CheckOrigin:     func(r *http.Request) bool { return true }, // Aceita TUDO
 	}
 )
 
 func main() {
-	// Rota Única para TUDO (PC e Mobile)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.ToLower(r.URL.Query().Get("id"))
 		role := r.URL.Query().Get("role")
 
-		// Se não tiver ID, mostra status
+		// LOG DE TENTATIVA
+		fmt.Printf(">>> Tentativa de conexão: ID=%s ROLE=%s\n", id, role)
+
 		if id == "" {
-			fmt.Fprint(w, "RemoteLink Broker is Online 🚀")
+			fmt.Fprint(w, "Broker V3.2 ONLINE")
 			return
 		}
 
-		// Se tiver ID, tenta virar WebSocket
 		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil { return }
+		if err != nil { 
+			fmt.Println("❌ Erro no Upgrade:", err)
+			return 
+		}
 		
 		fullID := id + "_" + role
 		mu.Lock()
 		clients[fullID] = conn
 		mu.Unlock()
 		
-		fmt.Printf("Conectado: %s\n", fullID)
+		fmt.Printf("✅ CONECTADO: %s\n", fullID)
 
 		for {
 			mt, message, err := conn.ReadMessage()
@@ -52,9 +57,11 @@ func main() {
 			}
 			mu.Unlock()
 		}
+		
 		mu.Lock(); delete(clients, fullID); mu.Unlock()
+		fmt.Printf("❌ DESCONECTADO: %s\n", fullID)
 	})
 
-	fmt.Println("🚀 Servidor Universal rodando...")
+	fmt.Println("🚀 Servidor V3.2 na porta 8080")
 	http.ListenAndServe(":8080", nil)
 }
