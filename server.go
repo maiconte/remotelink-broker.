@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"strings"
 	"github.com/gorilla/websocket"
 )
 
@@ -23,18 +24,21 @@ func main() {
 	if port == "" { port = "8080" }
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		id := r.URL.Query().Get("id")
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		role := r.URL.Query().Get("role")
-		pass := r.URL.Query().Get("pass")
+		pass := strings.TrimSpace(r.URL.Query().Get("pass"))
 		
 		mu.Lock()
-		// Se for o PC, ele define a senha
 		if role == "pc" {
 			passwords[id] = pass
+			fmt.Printf("🔑 PC [%s] registrou senha: %s\n", id, pass)
 		} else {
-			// Se for o Mobile, ele precisa acertar a senha
-			if passwords[id] != pass {
+			correct := passwords[id]
+			fmt.Printf("🔌 Tentativa Mobile [%s] - Senha enviada: %s | Esperada: %s\n", id, pass, correct)
+			
+			if pass != correct {
 				mu.Unlock()
+				fmt.Println("❌ SENHA INCORRETA")
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
