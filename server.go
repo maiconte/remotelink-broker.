@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"sync"
-	"strings"
 	"github.com/gorilla/websocket"
 )
 
@@ -13,38 +12,17 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-var (
-	connections = make(map[string]*websocket.Conn)
-	passwords   = make(map[string]string)
-	mu          sync.Mutex
-)
+var connections = make(map[string]*websocket.Conn)
+var mu sync.Mutex
 
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		id := r.URL.Query().Get("id")
 		role := r.URL.Query().Get("role")
-		pass := strings.TrimSpace(r.URL.Query().Get("pass"))
 		
-		mu.Lock()
-		if role == "pc" {
-			passwords[id] = pass
-			fmt.Printf("🔑 PC [%s] registrou senha: %s\n", id, pass)
-		} else {
-			correct := passwords[id]
-			fmt.Printf("🔌 Tentativa Mobile [%s] - Senha enviada: %s | Esperada: %s\n", id, pass, correct)
-			
-			if pass != correct {
-				mu.Unlock()
-				fmt.Println("❌ SENHA INCORRETA")
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-		}
-		mu.Unlock()
-
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil { return }
 
@@ -71,5 +49,6 @@ func main() {
 		mu.Unlock()
 	})
 
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "V6 OPEN ENGINE") })
 	http.ListenAndServe(":"+port, nil)
 }
