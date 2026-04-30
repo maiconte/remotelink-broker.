@@ -2,68 +2,60 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"sync"
+	"github.com/gorilla/websocket"
 )
 
-var (
-	frames    = make(map[string][]byte)
-	passwords = make(map[string]string)
-	commands  = make(map[string]string)
-	mu        sync.Mutex
-)
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// Mapa para conectar o PC ao Celular instantaneamente
+var connections = make(map[string]*websocket.Conn)
+var mu sync.Mutex
 
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
 
-	http.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+	// Rota Única e Universal para Pipeline (PC e Mobile)
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
-		pass := r.URL.Query().Get("pass")
-		body, _ := ioutil.ReadAll(r.Body)
+		role := r.URL.Query().Get("role") // "pc" ou "mobile"
 		
-		mu.Lock()
-		if len(body) > 0 { frames[id] = body }
-		passwords[id] = pass
-		cmd := commands[id]
-		commands[id] = "" // Limpa o comando após o PC ler
-		mu.Unlock()
-		
-		fmt.Fprint(w, cmd)
-	})
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil { return }
 
-	http.HandleFunc("/view", func(w http.ResponseWriter, r *http.Request) {
-		id := r.URL.Query().Get("id")
-		pass := r.URL.Query().Get("pass")
 		mu.Lock()
-		correctPass := passwords[id]
-		img, ok := frames[id]
+		connections[id+role] = conn
 		mu.Unlock()
 
-		if ok && pass == correctPass {
-			w.Header().Set("Content-Type", "image/jpeg")
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Write(img)
-		} else {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.WriteHeader(http.StatusUnauthorized)
+		fmt.Printf("🚀 %s conectado: %s\n", role, id)
+
+		for {
+			msgType, msg, err := conn.ReadMessage()
+			if err != nil { break }
+
+			// Lógica de Repasse (Bridge)
+			target := "mobile"
+			if role == "mobile" { target = "pc" }
+
+			mu.Lock()
+			if targetConn, ok := connections[id+target]; ok {
+				targetConn.WriteMessage(msgType, msg)
+			}
+			mu.Unlock()
 		}
-	})
 
-	http.HandleFunc("/control", func(w http.ResponseWriter, r *http.Request) {
-		id := r.URL.Query().Get("id")
-		pass := r.URL.Query().Get("pass")
-		cmd := r.URL.Query().Get("cmd")
-		
 		mu.Lock()
-		if pass == passwords[id] { commands[id] = cmd }
+		delete(connections, id+role)
 		mu.Unlock()
-		
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		fmt.Fprint(w, "OK")
 	})
 
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "V5 ENGINE X-TREME ONLINE") })
+	
+	fmt.Println("🔥 Motor Definitivo rodando na porta " + port)
 	http.ListenAndServe(":"+port, nil)
 }
