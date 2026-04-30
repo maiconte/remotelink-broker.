@@ -12,19 +12,35 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// Mapa para conectar o PC ao Celular instantaneamente
-var connections = make(map[string]*websocket.Conn)
-var mu sync.Mutex
+var (
+	connections = make(map[string]*websocket.Conn)
+	passwords   = make(map[string]string)
+	mu          sync.Mutex
+)
 
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
 
-	// Rota Única e Universal para Pipeline (PC e Mobile)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
-		role := r.URL.Query().Get("role") // "pc" ou "mobile"
+		role := r.URL.Query().Get("role")
+		pass := r.URL.Query().Get("pass")
 		
+		mu.Lock()
+		// Se for o PC, ele define a senha
+		if role == "pc" {
+			passwords[id] = pass
+		} else {
+			// Se for o Mobile, ele precisa acertar a senha
+			if passwords[id] != pass {
+				mu.Unlock()
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+		}
+		mu.Unlock()
+
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil { return }
 
@@ -32,13 +48,10 @@ func main() {
 		connections[id+role] = conn
 		mu.Unlock()
 
-		fmt.Printf("🚀 %s conectado: %s\n", role, id)
-
 		for {
 			msgType, msg, err := conn.ReadMessage()
 			if err != nil { break }
 
-			// Lógica de Repasse (Bridge)
 			target := "mobile"
 			if role == "mobile" { target = "pc" }
 
@@ -54,8 +67,5 @@ func main() {
 		mu.Unlock()
 	})
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "V5 ENGINE X-TREME ONLINE") })
-	
-	fmt.Println("🔥 Motor Definitivo rodando na porta " + port)
 	http.ListenAndServe(":"+port, nil)
 }
