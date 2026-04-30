@@ -10,7 +10,7 @@ import (
 
 var (
 	frames    = make(map[string][]byte)
-	passwords = make(map[string]string) // Guarda a senha de cada ID
+	passwords = make(map[string]string)
 	commands  = make(map[string]string)
 	mu        sync.Mutex
 )
@@ -19,7 +19,6 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
 
-	// PC envia imagem e DEFINE a senha
 	http.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		pass := r.URL.Query().Get("pass")
@@ -27,19 +26,17 @@ func main() {
 		
 		mu.Lock()
 		if len(body) > 0 { frames[id] = body }
-		passwords[id] = pass // Atualiza a senha atual do PC
+		passwords[id] = pass
 		cmd := commands[id]
-		commands[id] = ""
+		commands[id] = "" // Limpa o comando após o PC ler
 		mu.Unlock()
 		
 		fmt.Fprint(w, cmd)
 	})
 
-	// Mobile só recebe se a SENHA estiver correta
 	http.HandleFunc("/view", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		pass := r.URL.Query().Get("pass")
-		
 		mu.Lock()
 		correctPass := passwords[id]
 		img, ok := frames[id]
@@ -51,11 +48,10 @@ func main() {
 			w.Write(img)
 		} else {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.WriteHeader(http.StatusUnauthorized) // 401 - Senha Errada
+			w.WriteHeader(http.StatusUnauthorized)
 		}
 	})
 
-	// Controle também exige senha
 	http.HandleFunc("/control", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		pass := r.URL.Query().Get("pass")
@@ -68,8 +64,6 @@ func main() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		fmt.Fprint(w, "OK")
 	})
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "RemoteLink Ultra Secure") })
 
 	http.ListenAndServe(":"+port, nil)
 }
