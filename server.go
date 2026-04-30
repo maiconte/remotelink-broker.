@@ -9,65 +9,67 @@ import (
 )
 
 var (
-	frames   = make(map[string][]byte)
-	commands = make(map[string]string) // Guarda o último comando do mouse
-	mu       sync.Mutex
+	frames    = make(map[string][]byte)
+	passwords = make(map[string]string) // Guarda a senha de cada ID
+	commands  = make(map[string]string)
+	mu        sync.Mutex
 )
 
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
 
-	// PC envia imagem e RECEBE comandos
+	// PC envia imagem e DEFINE a senha
 	http.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
+		pass := r.URL.Query().Get("pass")
 		body, _ := ioutil.ReadAll(r.Body)
-		if len(body) > 0 {
-			mu.Lock()
-			frames[id] = body
-			mu.Unlock()
-		}
-
-		// Retorna o comando pendente para o PC executar
+		
 		mu.Lock()
+		if len(body) > 0 { frames[id] = body }
+		passwords[id] = pass // Atualiza a senha atual do PC
 		cmd := commands[id]
-		commands[id] = "" // Limpa após ler
+		commands[id] = ""
 		mu.Unlock()
 		
 		fmt.Fprint(w, cmd)
 	})
 
-	// Celular envia comando de clique
+	// Mobile só recebe se a SENHA estiver correta
+	http.HandleFunc("/view", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		pass := r.URL.Query().Get("pass")
+		
+		mu.Lock()
+		correctPass := passwords[id]
+		img, ok := frames[id]
+		mu.Unlock()
+
+		if ok && pass == correctPass {
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Write(img)
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.WriteHeader(http.StatusUnauthorized) // 401 - Senha Errada
+		}
+	})
+
+	// Controle também exige senha
 	http.HandleFunc("/control", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
+		pass := r.URL.Query().Get("pass")
 		cmd := r.URL.Query().Get("cmd")
 		
 		mu.Lock()
-		commands[id] = cmd
+		if pass == passwords[id] { commands[id] = cmd }
 		mu.Unlock()
 		
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		fmt.Fprint(w, "OK")
 	})
 
-	// Mobile baixa imagem
-	http.HandleFunc("/view", func(w http.ResponseWriter, r *http.Request) {
-		id := r.URL.Query().Get("id")
-		mu.Lock()
-		img, ok := frames[id]
-		mu.Unlock()
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "RemoteLink Ultra Secure") })
 
-		if ok {
-			w.Header().Set("Content-Type", "image/jpeg")
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Write(img)
-		} else {
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "V3.5 Control Ready") })
-
-	fmt.Println("🚀 Motor de Controle V3.5 na porta " + port)
 	http.ListenAndServe(":"+port, nil)
 }
