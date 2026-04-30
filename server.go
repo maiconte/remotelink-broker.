@@ -2,53 +2,57 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"sync"
-	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
-var connections = make(map[string]*websocket.Conn)
-var mu sync.Mutex
+var (
+	frames   = make(map[string][]byte)
+	commands = make(map[string]string)
+	mu       sync.Mutex
+)
 
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
 
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+	// PC envia foto e recebe comando
+	http.HandleFunc("/u", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
-		role := r.URL.Query().Get("role")
-		
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil { return }
-
+		body, _ := ioutil.ReadAll(r.Body)
 		mu.Lock()
-		connections[id+role] = conn
+		if len(body) > 0 { frames[id] = body }
+		cmd := commands[id]
+		commands[id] = ""
 		mu.Unlock()
-
-		for {
-			msgType, msg, err := conn.ReadMessage()
-			if err != nil { break }
-
-			target := "mobile"
-			if role == "mobile" { target = "pc" }
-
-			mu.Lock()
-			if targetConn, ok := connections[id+target]; ok {
-				targetConn.WriteMessage(msgType, msg)
-			}
-			mu.Unlock()
-		}
-
-		mu.Lock()
-		delete(connections, id+role)
-		mu.Unlock()
+		fmt.Fprint(w, cmd)
 	})
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "V6 OPEN ENGINE") })
+	// Celular baixa foto
+	http.HandleFunc("/v", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		mu.Lock()
+		img, ok := frames[id]
+		mu.Unlock()
+		if ok {
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Write(img)
+		}
+	})
+
+	// Celular envia comando
+	http.HandleFunc("/c", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		cmd := r.URL.Query().Get("cmd")
+		mu.Lock()
+		commands[id] = cmd
+		mu.Unlock()
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		fmt.Fprint(w, "OK")
+	})
+
 	http.ListenAndServe(":"+port, nil)
 }
